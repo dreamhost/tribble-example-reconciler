@@ -1,0 +1,221 @@
+# A monthly invoice to one client (ADR 0012) — a TEST FIXTURE, not a shipped process.
+#
+# The suite reads it to exercise a non-trivial definition. Every value in it is a
+# placeholder: the client, the rate, the template id and the sender address.
+#
+# An invoice is a SET OF LINES, not worked-days x day-rate with decorations: some carry no
+# worked days at all (a Christmas bonus is one manual line). So `computed_lines` may produce
+# ZERO lines and nothing branches on it — absence is graceful everywhere, or this file grows
+# conditionals (trip-wire 7).
+#
+# `cycle_key` numbers by a per-YEAR sequence rather than the month, because more than one
+# invoice can exist in a month.
+
+name: monthly_invoice
+cycle_key: "acme_invoice_{year}_{seq:03d}"
+
+opens:
+  # `via`, not `on` — YAML 1.1 resolves a bare `on` key to boolean true.
+  - {via: schedule, cron: "0 9 1 * *"}  # the regular monthly invoice
+  - {via: manual}                       # a bonus / ad-hoc invoice, on no cadence at all
+
+stages:
+  # May contribute nothing — a bonus invoice carries no worked period, and nothing branches
+  # on that. The rate lives here rather than inside an expression, which is where the prior
+  # art kept it (an Edit Fields assignment reading `days_count * 8 * <rate>`).
+  - name: computed_lines
+    kind: act
+    action: lines.worked_days
+    config:
+      day_rate: 800        # placeholder: 100/h x 8h
+      hours_per_day: 8
+
+  # Its own stage, not bookkeeping: without a recorded `approval_requested` the reconciler
+  # re-sends this email every single day until answered.
+  # `currency` is stated on EVERY money-rendering stage, not just the ones that compute a
+  # total. It was missing here and on `invoice_emailed`, and the default in
+  # `actions/notify.py` is EUR — so the approval mail a human reads showed an "EUR" amount
+  # while the PDF said USD. Same digits, different symbol, on the one document whose entire
+  # job is to be checked by a person before the invoice is real.
+  - name: approval_requested
+    kind: act
+    after: [computed_lines]
+    action: notify.approval_request
+    config:
+      currency: USD
+
+  # GATE ①. Approval is a REPLY to the approval mail whose first word is "yes" — a plain word
+  # comparison, so no interpretation is involved. (Until 2026-11-14 it was a Gmail label;
+  # replying works from any client and leaves room for answering with more than a yes.)
+  # The reconciler ASKS Gmail (through n8n) at decision time rather than waiting to be told,
+  # so an unreachable n8n raises instead of looking exactly like "not approved yet".
+  #
+  # `correlate_on: subject` ties the reply to THIS cycle — `approval_requested` recorded the
+  # subject it sent, and the reply's subject is that one behind `Re:` — so two invoices open at
+  # once (a monthly and a bonus) can never satisfy each other's gate. Only a mail carrying
+  # Gmail's SENT label counts: the request arrives from the relay's sender, so SENT can only be
+  # your answer. Any other first word (a "no", a question) is logged and the gate stays open.
+  - name: data_approved
+    kind: await
+    after: [approval_requested]
+    signal:
+      source: gmail
+      correlate_on: subject
+      reply:
+        # QUOTED: YAML 1.1 reads a bare `yes` as boolean true (the `on` trap again), and the
+        # gate would then wait for a reply starting with "true".
+        accept: ["yes"]
+      slack_seconds: 900
+
+  # AFTER gate ① on purpose. The approval wait is the window in which a human is actually
+  # looking at the numbers; the prior art read extras seconds after the run started, so the
+  # table had to be filled in before you had seen the draft.
+  - name: manual_lines
+    kind: act
+    after: [data_approved]
+    action: lines.manual
+
+  - name: total_computed
+    kind: act
+    after: [manual_lines]
+    action: compute.total
+    config:
+      currency: USD
+
+  # Called DIRECTLY, not through n8n: the CraftMyPDF n8n node is a community plugin and the
+  # cluster has no persistence, so it is lost on every pod restart. The REST API needs only an
+  # API key, so nothing here needs n8n's credential store the way Gmail and SMTP do.
+  #
+  # VAT is NOT a line here. The services are VAT-exempt here;
+  # the template requires a zero VAT row, so the render action appends it. Modelling it as a
+  # process line would inflate line_count and put a spurious VAT row in the approval mail.
+  - name: invoice_generated
+    kind: act
+    after: [total_computed]
+    action: craftmypdf.render
+    config:
+      template_id: your-template-id     # placeholder: a CraftMyPDF template id
+      currency: USD
+      rate_per_hour: 100
+      worked_item_name: Amount          # the computed line prints as a bare "Amount"
+      # Printed verbatim. The invoice is dated to the LAST DAY OF THE WORKED PERIOD, not to
+      # whenever it is rendered — so a re-run weeks later prints the same date it replaced.
+      date_format: "%A, %-d %B %Y"      # Friday, 31 July 2026
+      month_format: "%B %Y"             # July 2026
+
+  # ② the rendered PDF, mailed back for a second look. A wrong total caught here is a void
+  # and a re-run, never an amendment — which is why no stage below needs a correction path.
+  - name: invoice_emailed
+    kind: act
+    after: [invoice_generated]
+    action: notify.invoice_ready
+    config:
+      currency: USD
+
+  # GATE ②. Same mechanism, different subject, so a reply to gate ①'s mail cannot close it.
+  # Closing this means "the PDF is right, I am submitting it": submission itself is manual
+  # today and nothing observes it. When it is automated, an `invoice_submitted` act stage
+  # slots in here — a YAML change, no code.
+  - name: invoice_approved
+    kind: await
+    after: [invoice_emailed]
+    signal:
+      source: gmail
+      correlate_on: subject
+      reply:
+        accept: ["yes"]
+      slack_seconds: 900
+
+  # The two payment mails are ~3 HOURS apart (submitted mid-afternoon, processed
+  # the same evening) — well inside one daily run, so a single run will see both already sitting in the
+  # mailbox. That is only survivable because a satisfied await is stamped with its EVIDENCE's
+  # time rather than the run's; otherwise this stage would search from the following morning
+  # and never see the second mail. See core.EVIDENCE_TIME_KEY.
+  #
+  # These two stages are the ONLY place in this process that needs a READING rather than a
+  # comparison: the mails share a sender and an invoice and differ only in wording, so nothing
+  # structural separates them. That is the semantic work ADR 0012 puts in the reconciler.
+  #
+  # `mentions: invoice_number` is the deterministic half and is NOT the classifier's job: the
+  # mail must name this cycle's invoice ("Invoice 7-2026" in Acme's wording, matched
+  # against our zero-padded "07-2026"). The question below is asked only of mail that already
+  # passed it, so the reading decides which step, never whose invoice.
+  #
+  # Both questions are worded around INITIATION vs OUTCOME, never around vocabulary, and that
+  # is not a stylistic preference — an earlier draft asked whether the payment had been "SENT
+  # or ISSUED" and matched the WRONG mail, because the completion notice says verbatim "A
+  # payment was sent to you today". The one verb that reads as decisive is the one
+  # both mails share. (Symmetrically, "processed" appears only in the notice's subject line and
+  # nowhere in its body, so the classifier is shown both.) Keying on either would also
+  # reintroduce exactly the template-brittleness a classifier was chosen to avoid.
+  #
+  # Verified against both mail shapes, all four combinations — see
+  # tests/test_reconciler_classify.py. Re-run it after ANY edit here; the failure mode is a
+  # stage that matches the wrong mail, which is invisible until the next one never arrives.
+  - name: payment_submitted
+    kind: await
+    after: [invoice_approved]
+    signal:
+      source: classify
+      from: accounting@acme.example
+      mentions: invoice_number
+      classify: >-
+        Does this email announce that a payment has been INITIATED — set in motion, submitted
+        for processing, or released for delivery — WITHOUT confirming that it has completed?
+        Answer true only for that initial announcement. Answer false if the email reports the
+        outcome of a payment: that it completed, succeeded, settled, cleared, or was
+        processed. Judge initiation versus outcome, not the particular verb used — an outcome
+        report may still describe the money as having been sent.
+
+  - name: payment_processed
+    kind: await
+    after: [payment_submitted]
+    signal:
+      source: classify
+      from: accounting@acme.example
+      mentions: invoice_number
+      classify: >-
+        Is this email confirming that a payment already sent has now COMPLETED — processed,
+        settled, or successfully delivered? Answer true only for a confirmation of the
+        outcome. An earlier, separate email announced that the payment was being sent; that
+        announcement must NOT match here.
+
+  # --- housekeeping: archive each mail once the process has moved past it ------------------
+  #
+  # `gmail.archive` takes INBOX off the mail a gate matched. For the two reply gates that is
+  # the mail you answered (`replied_to`), not your reply, which is in Sent and has no INBOX.
+  #
+  # LAST in the file on purpose, though each depends only on its own gate. A pass walks stages
+  # in file order and an `act` that raises ends the pass, so housekeeping placed here can never
+  # stop the invoice itself: by the time the label relay is called, every stage that was ready
+  # has already run.
+  #
+  # The PDF mail is the exception in timing, not in mechanism: it stays in the inbox until
+  # payment_processed, because it is the one worth having in view until the money has landed.
+  - name: approval_mail_archived
+    kind: act
+    after: [data_approved]
+    action: gmail.archive
+    config:
+      evidence_of: data_approved
+
+  - name: payment_submitted_mail_archived
+    kind: act
+    after: [payment_submitted]
+    action: gmail.archive
+    config:
+      evidence_of: payment_submitted
+
+  - name: payment_processed_mail_archived
+    kind: act
+    after: [payment_processed]
+    action: gmail.archive
+    config:
+      evidence_of: payment_processed
+
+  - name: invoice_mail_archived
+    kind: act
+    after: [payment_processed]
+    action: gmail.archive
+    config:
+      evidence_of: invoice_approved

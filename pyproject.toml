@@ -1,0 +1,43 @@
+[project]
+name = "reconciler"
+version = "0.1.0"
+description = "Declarative multi-step processes advanced by a reconciler that is a pure function of recorded milestones."
+requires-python = ">=3.13"
+
+# Every runtime dependency, and nothing else: the image, CI and a laptop all install the
+# project from this one list.
+dependencies = [
+    "pydantic>=2.6",
+    "python-dotenv",
+    "pyyaml",
+    # Postgres, the alternative store (`RECONCILER_STORE=neon`).
+    "psycopg[binary]>=3.1",
+    # MySQL, the store of record. Pure Python, so no wheel build and no C
+    # library in the image, and `pyformat` paramstyle (%(name)s) identical to psycopg — which is
+    # why the adapter's parameter dicts carried over unchanged.
+    "pymysql>=1.1",
+]
+
+[project.optional-dependencies]
+# ruff is pinned to a minor range: this project selects no rules, so the lint contract is
+# whatever that ruff version defaults to, and the default set grows between releases.
+dev = ["pytest>=8", "ruff>=0.15,<0.16"]
+
+[project.scripts]
+reconciler = "reconciler.run:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+respect-gitignore = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]
