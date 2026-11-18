@@ -5,6 +5,6 @@
     "python": "3.13"
   },
   "deploy": {
-    "startCommand": "PYTHONPATH=src python -m reconciler.run sweep-tasks --dry-run"
+    "startCommand": "sh bin/reconciler sweep-tasks --dry-run"
   }
 }

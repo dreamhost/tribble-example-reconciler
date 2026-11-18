@@ -1,0 +1,33 @@
+#!/bin/sh
+# The one entry point for every way this repo is run in a container:
+#
+#   bin/reconciler reconcile --process <name>    the CLI (also: open, sweep-tasks)
+#   bin/reconciler migrate [--dry-run]           apply migrations/*.sql to MySQL
+#   bin/reconciler gateway                       the stand-in event gateway (tools/gateway_stub.py)
+#
+# It exists because of one thing a container platform may not offer: mounting a file. The MySQL
+# adapter needs the server's CA certificate as a file (MYSQL_SSL_CA). Where only environment
+# variables are available, put the PEM in MYSQL_SSL_CA_B64, base64-encoded on one line
+# (`base64 -w0 ca.pem`), and it is written to a file here before anything starts.
+set -eu
+
+cd "$(dirname "$0")/.."
+export PYTHONPATH="src${PYTHONPATH:+:$PYTHONPATH}"
+
+if [ -n "${MYSQL_SSL_CA_B64:-}" ] && [ -z "${MYSQL_SSL_CA:-}" ]; then
+    ca="${TMPDIR:-/tmp}/mysql-ca.pem"
+    (umask 077 && python -c '
+import base64, os, sys
+pem = base64.b64decode(os.environ["MYSQL_SSL_CA_B64"], validate=True)
+if b"BEGIN CERTIFICATE" not in pem:
+    sys.exit("MYSQL_SSL_CA_B64 does not decode to a PEM certificate")
+open(sys.argv[1], "wb").write(pem)
+' "$ca")
+    export MYSQL_SSL_CA="$ca"
+fi
+
+case "${1:-}" in
+    migrate) shift; exec python scripts/mysql_migrate.py "$@" ;;
+    gateway) shift; exec python tools/gateway_stub.py "$@" ;;
+    *)       exec python -m reconciler.run "$@" ;;
+esac
