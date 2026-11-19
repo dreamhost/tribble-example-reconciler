@@ -21,6 +21,7 @@ import urllib.request
 from datetime import UTC, datetime
 
 from reconciler.core import EVIDENCE_TIME_KEY, Cycle, Milestone
+from reconciler.adapters.ingest import request_headers
 from reconciler.definition import ProcessDefinition
 
 logger = logging.getLogger("reconciler.adapters.gateway")
@@ -69,8 +70,10 @@ class GatewayMilestones:
     """
 
     def __init__(self, base_url: str, definition: ProcessDefinition,
-                 app: str = DEFAULT_APP, timeout: float = 10.0):
+                 app: str = DEFAULT_APP, timeout: float = 10.0,
+                 auth: tuple[str, str] | None = None):
         self._url = f"{base_url.rstrip('/')}/sensors/{app}"
+        self._headers = request_headers(auth)
         self._definition = definition
         self._timeout = timeout
 
@@ -84,7 +87,7 @@ class GatewayMilestones:
         request = urllib.request.Request(
             self._url,
             data=json.dumps({"payload": body}).encode(),
-            headers={"Content-Type": "application/json"},
+            headers=self._headers,
             method="POST",
         )
         try:

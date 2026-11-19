@@ -142,7 +142,7 @@ def test_event_name_is_prefixed_with_the_process():
 
 def test_the_shipped_invoice_definition_loads():
     definitions = load_definitions(PROCESSES_DIR)
-    assert [d.name for d in definitions] == ["monthly_invoice"]
+    assert [d.name for d in definitions] == ["monthly_invoice", "site_check"]
 
 
 def test_the_invoice_collects_manual_lines_after_approval():

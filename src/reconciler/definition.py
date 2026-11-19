@@ -47,15 +47,24 @@ class Opens(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    via: Literal["schedule", "manual"]
+    via: Literal["schedule", "manual", "event"]
     cron: str | None = None
+    # `via: event` — every recorded event of this name opens one cycle, whose context is the
+    # event. The cycle key must then carry `{event_id}`, which is what makes opening idempotent:
+    # the same event can only ever mint the same key.
+    event: str | None = None
+    lookback_seconds: int = 7 * 24 * 3600
 
     @model_validator(mode="after")
     def _cron_iff_schedule(self):
         if self.via == "schedule" and not self.cron:
             raise ValueError("opens.via=schedule requires a `cron`")
-        if self.via == "manual" and self.cron:
-            raise ValueError("opens.via=manual must not carry a `cron`")
+        if self.via != "schedule" and self.cron:
+            raise ValueError(f"opens.via={self.via} must not carry a `cron`")
+        if self.via == "event" and not self.event:
+            raise ValueError("opens.via=event requires an `event` name")
+        if self.via != "event" and self.event:
+            raise ValueError(f"opens.via={self.via} must not carry an `event`")
         return self
 
 
@@ -121,6 +130,9 @@ class ProcessDefinition(BaseModel):
             seen.add(stage.name)
         if not self.stages:
             raise ValueError("a process needs at least one stage")
+        if any(o.via == "event" for o in self.opens) and "{event_id}" not in self.cycle_key:
+            raise ValueError("a process opened by an event needs `{event_id}` in its "
+                             "`cycle_key`, or two events would mint the same cycle")
         return self
 
     def event_name(self, stage_name: str) -> str:

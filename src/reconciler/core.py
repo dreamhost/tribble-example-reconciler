@@ -157,7 +157,7 @@ class EventLog(Protocol):
     systems the moment this tier owns a store of its own, so a store that cannot see Aware's
     log should be unable to claim this port rather than implement it and raise.
 
-    Consumed through `finder.NeonEvents`, which adapts it to `finder.CandidateSource`.
+    Consumed through `finder.RecordedEvents`, which adapts it to `finder.CandidateSource`.
     """
 
     def signals(self, name: str, since: int) -> list[tuple[int, dict]]:

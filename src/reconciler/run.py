@@ -33,6 +33,7 @@ from reconciler.app import (
     RunOptions,
     advance,
     open_cycle,
+    open_from_events,
     sweep_tasks,
     walk_fresh,
 )
@@ -72,7 +73,19 @@ def cmd_open(args) -> int:
 
 
 def cmd_reconcile(args) -> int:
-    results = advance(args.process, cycle_key=args.cycle, options=_options(args))
+    options = _options(args)
+    opened = open_from_events(args.process, options=options)
+    for cycle in opened:
+        print(f"{'would open' if args.dry_run else 'opened'} {cycle.key} "
+              f"for event {cycle.context['event'].get('name')}")
+    results = advance(args.process, cycle_key=args.cycle, options=options)
+    # A cycle opened a moment ago may not be readable yet: nothing is written in a dry run,
+    # and on Postgres the write travels through Vector and Kafka. Walk those directly, so
+    # reacting to an event does not wait a whole extra run.
+    seen = {cycle.key for cycle, _ in results}
+    results += [(cycle, walk_fresh(args.process, cycle, options=options))
+                for cycle in opened
+                if cycle.key not in seen and args.cycle in (None, cycle.key)]
     if not results:
         print(f"no cycles open for {args.process}")
         return 0

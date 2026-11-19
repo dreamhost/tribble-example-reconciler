@@ -31,12 +31,13 @@ from reconciler.adapters.labels import N8nLabelRelay
 from reconciler.adapters.trash import N8nTrashRelay
 from reconciler.actions.mailbox import ConsoleLabelRemover
 from reconciler.adapters.mysql import MysqlMilestones, MysqlTasks, MysqlWriter
+from reconciler.adapters.n8n import ConsoleWorkflows, N8nWorkflows
 from reconciler.adapters.neon import NeonMilestones, NeonTasks
 from reconciler.core import Cycle, Milestone, MilestoneStore, Outcome, reconcile
 from reconciler.definition import GENESIS_STAGE, ProcessDefinition, load_definitions
 from reconciler import purge, schedule, tasks
 from reconciler.tasks import TASK_INGEST_APP
-from reconciler.finder import SignalFinder
+from reconciler.finder import RecordedEvents, SignalFinder
 from reconciler.recording import (
     DryRunWriter,
     StoreBackedEvents,
@@ -117,7 +118,27 @@ def services_for(options: RunOptions) -> Services:
     key = os.environ.get("CRAFTMYPDF_API_KEY")
     return Services(mailer=mailer_for(options),
                     pdf=CraftMyPdf(api_key=key) if key else None,
-                    labels=label_relay_for(options))
+                    labels=label_relay_for(options),
+                    workflows=workflows_for(options))
+
+
+def workflows_for(options: RunOptions):
+    """What `n8n.workflow` runs workflows on; a console one in a dry run.
+
+    None when `N8N_WEBHOOK_BASE_URL` is unset, and the action then raises when a cycle reaches
+    it. The token is optional because a webhook can be left open; set one, and the workflow's
+    webhook node should check the same header.
+    """
+    if options.dry_run:
+        return ConsoleWorkflows()
+    base = os.environ.get("N8N_WEBHOOK_BASE_URL")
+    if not base:
+        return None
+    return N8nWorkflows(
+        base_url=base,
+        token=os.environ.get("N8N_WEBHOOK_TOKEN") or None,
+        header=os.environ.get("N8N_WEBHOOK_HEADER", "X-Relay-Token"),
+    )
 
 
 def label_relay_for(options: RunOptions):
@@ -146,7 +167,7 @@ def sink_for(options: RunOptions, definition: ProcessDefinition):
     persister, which ADR 0012 forbids and which `adapters/neon.py` says in its first paragraph.
     """
     downstream = (DryRunMilestones(definition) if options.dry_run
-                  else GatewayMilestones(_vector_base(), definition))
+                  else GatewayMilestones(_vector_base(), definition, auth=_vector_auth()))
     writer = _writer(options)
     return (StoreBackedMilestones(definition, writer, downstream) if writer
             else downstream)
@@ -157,6 +178,14 @@ def _vector_base() -> str:
     if not base:
         raise ConfigurationError("VECTOR_BASE_URL is not set (use dry_run to preview)")
     return base
+
+
+def _vector_auth() -> tuple[str, str] | None:
+    """Basic credentials for the gateway, when it has a public address and so asks for them."""
+    user, password = os.environ.get("VECTOR_USERNAME"), os.environ.get("VECTOR_PASSWORD")
+    if bool(user) != bool(password):
+        raise ConfigurationError("set both VECTOR_USERNAME and VECTOR_PASSWORD, or neither")
+    return (user, password) if user else None
 
 
 def _writer(options: RunOptions):
@@ -180,7 +209,11 @@ def _writer(options: RunOptions):
 # rollback is the same act in reverse: config, not a deploy.
 STORE_NEON = "neon"
 STORE_MYSQL = "mysql"
-_DSN_VAR = {STORE_NEON: "NEON_DATABASE_URL", STORE_MYSQL: "MYSQL_DATABASE_URL"}
+# `postgres` is `neon` under the name of what it is: the same adapter and the same `events`
+# table, on any Postgres, configured with the conventional `DATABASE_URL`.
+STORE_POSTGRES = "postgres"
+_DSN_VAR = {STORE_NEON: "NEON_DATABASE_URL", STORE_MYSQL: "MYSQL_DATABASE_URL",
+            STORE_POSTGRES: "DATABASE_URL"}
 
 
 def _store_choice() -> str:
@@ -227,6 +260,19 @@ def milestone_store() -> MilestoneStore:
     return NeonMilestones(dsn)
 
 
+def event_log() -> NeonMilestones:
+    """The raw events a process reacts to: the `events` table Vector writes.
+
+    Postgres only. The MySQL store holds this tier's cycles and milestones and nothing else, so
+    it cannot answer, and says so instead of reporting an empty log.
+    """
+    choice, dsn = _store_dsn()
+    if choice == STORE_MYSQL:
+        raise ConfigurationError(
+            "reacting to events needs the Postgres store (RECONCILER_STORE=postgres)")
+    return NeonMilestones(dsn)
+
+
 def task_store() -> tasks.OpenTaskStore:
     """The store the sweep reads open tasks from."""
     choice, dsn = _store_dsn()
@@ -250,15 +296,22 @@ def finders() -> dict:
     raises `NotYetImplemented` naming the source, which is the loud stop. Silently falling back
     would match the first payment mail mentioning the invoice and record the wrong step.
     """
+    built: dict = {}
+    # `events` — a recorded raw event. On Postgres the event log and the store are the same
+    # table; MySQL holds only this tier's own state and has no log to read. Wired only when a
+    # DSN is present, so a preview with no database still walks.
+    if _store_choice() != STORE_MYSQL and os.environ.get(_DSN_VAR[_store_choice()]):
+        built["events"] = SignalFinder(RecordedEvents(event_log()))
+
     url = os.environ.get("GMAIL_QUERY_URL")
     if not url:
-        return {}
+        return built
     query = N8nGmailQuery(
         url=url,
         token=os.environ["MAIL_RELAY_TOKEN"],
         header=os.environ.get("MAIL_RELAY_HEADER", "X-Relay-Token"),
     )
-    built = {"gmail": SignalFinder(query)}
+    built["gmail"] = SignalFinder(query)
 
     if os.environ.get("LLM_RELAY_URL"):
         built["classify"] = SignalFinder(query, classifier=N8nGeminiRelay(
@@ -303,7 +356,7 @@ def task_sink(options: RunOptions):
     if not base:
         raise ConfigurationError("VECTOR_BASE_URL is not set (use dry_run to preview)")
     writer = _writer(options)
-    sink = GatewayEvents(base, app=TASK_INGEST_APP)
+    sink = GatewayEvents(base, app=TASK_INGEST_APP, auth=_vector_auth())
     return StoreBackedEvents(writer, sink) if writer else sink
 
 
@@ -449,6 +502,51 @@ def open_cycle(process: str, *, seq: int | None = None, period: dict | None = No
     sink_for(options, definition).record(cycle, GENESIS_STAGE, context)
     logger.info("opened cycle %s", cycle.key)
     return cycle
+
+
+def open_from_events(process: str, *, options: RunOptions | None = None,
+                     now: int | None = None) -> list[Cycle]:
+    """Open one cycle for every recorded event an `opens: {via: event}` opener names.
+
+    How a process REACTS: the event is the genesis fact, and the cycle's context is the event.
+    Nothing remembers which events were handled. The key is minted from the event's id, so an
+    event that already has a cycle is recognised by the key existing, and running this twice
+    opens nothing the second time.
+
+    On Postgres the genesis reaches the store through Vector and Kafka, a moment after this
+    returns. A run that starts inside that moment opens the same key again; the store then
+    holds two identical genesis events, which read back as one cycle.
+
+    `lookback_seconds` bounds the read, not correctness: an event older than that with no cycle
+    is simply never opened, so it must comfortably exceed the longest gap between runs.
+    """
+    options = options or RunOptions()
+    definition = definition_named(process, options.processes_dir)
+    openers = [o for o in definition.opens if o.via == "event"]
+    if not openers:
+        return []
+
+    now = now if now is not None else int(datetime.now(UTC).timestamp())
+    existing = {cycle.key for cycle in milestone_store().cycles(definition)}
+    log = event_log()
+    sink = sink_for(options, definition)
+    opened: list[Cycle] = []
+    for opener in openers:
+        for occurred_at, event in log.signals(opener.event, now - opener.lookback_seconds):
+            key = definition.cycle_key.format(
+                event_id=event["id"],
+                year=datetime.fromtimestamp(occurred_at, UTC).year)
+            if key in existing:
+                continue
+            context = {"event": event, "event_at": occurred_at}
+            cycle = Cycle(key=key, process=definition.name,
+                          user_id=event.get("user_id") or os.environ.get("AWARE_USER_ID", "demo"),
+                          opened_at=now, context=context)
+            sink.record(cycle, GENESIS_STAGE, context)
+            existing.add(key)
+            opened.append(cycle)
+            logger.info("opened cycle %s for event %s", key, opener.event)
+    return opened
 
 
 def advance(process: str, *, cycle_key: str | None = None,

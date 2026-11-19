@@ -238,10 +238,12 @@ def _expected_value(field: str, milestones: dict[str, Milestone]):
     return max(candidates, key=lambda m: m.timestamp).payload[field]
 
 
-class NeonEvents:
+class RecordedEvents:
     """Candidates are recorded raw events of one name (`signal.event`).
 
-    **No current consumer.** The invoice's gates all read Gmail directly, so this exists for
+    Adapts a `core.EventLog` (the `events` table, on MySQL) to a `CandidateSource`.
+
+    The invoice's gates all read Gmail directly, so this exists for
     the obvious next case — a process awaiting an *Aware-derived* fact ("you got home"), which
     genuinely is something only Neon knows. Flagged rather than deleted, and worth deleting if
     it is still unused when the second process lands: ADR 0009 records `decaying_window` sitting

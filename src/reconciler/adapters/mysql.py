@@ -294,3 +294,4 @@ class MysqlWriter(_Reader):
         self._execute([(_CLOSE_TASK_SQL, {
             "upstream_id": body["upstream_id"], "closed_at": int(body["timestamp"]),
             "closed_via": body.get("closed_via")})])
+

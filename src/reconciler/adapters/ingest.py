@@ -21,12 +21,26 @@ Two things about that contract are easy to get wrong and expensive to discover l
   this whole feature adds no infrastructure.
 """
 
+import base64
 import json
 import logging
 import urllib.error
 import urllib.request
 
 logger = logging.getLogger("reconciler.adapters.ingest")
+
+
+def request_headers(auth: tuple[str, str] | None = None) -> dict[str, str]:
+    """The headers of a gateway POST; HTTP basic credentials when the gateway asks for them.
+
+    A gateway reachable only from beside it needs none. One with a public address does, since
+    anything that can post an event can open a cycle.
+    """
+    headers = {"Content-Type": "application/json"}
+    if auth:
+        token = base64.b64encode(f"{auth[0]}:{auth[1]}".encode()).decode()
+        headers["Authorization"] = f"Basic {token}"
+    return headers
 
 
 class GatewayEvents:
@@ -39,15 +53,17 @@ class GatewayEvents:
     diff on its next run, so a dropped event costs an hour, while a doubled one is permanent.
     """
 
-    def __init__(self, base_url: str, app: str, timeout: float = 10.0):
+    def __init__(self, base_url: str, app: str, timeout: float = 10.0,
+                 auth: tuple[str, str] | None = None):
         self._url = f"{base_url.rstrip('/')}/sensors/{app}"
+        self._headers = request_headers(auth)
         self._timeout = timeout
 
     def emit(self, payload: dict) -> None:
         request = urllib.request.Request(
             self._url,
             data=json.dumps({"payload": payload}).encode(),
-            headers={"Content-Type": "application/json"},
+            headers=self._headers,
             method="POST",
         )
         try:

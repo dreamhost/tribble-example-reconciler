@@ -6,7 +6,7 @@ open at once, that is not hypothetical.
 """
 
 from reconciler.core import Cycle, Milestone
-from reconciler.finder import NeonEvents, SignalFinder
+from reconciler.finder import RecordedEvents, SignalFinder
 
 APPROVED = "email_labeled_invoice_approved"
 
@@ -26,7 +26,7 @@ class FakeSignals:
 
 def _finder(source):
     """A finder over recorded events — the matcher is shared with the Gmail source."""
-    return SignalFinder(NeonEvents(source))
+    return SignalFinder(RecordedEvents(source))
 
 
 def _cycle(key="acme_invoice_2026_007"):

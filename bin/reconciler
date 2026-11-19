@@ -27,7 +27,12 @@ open(sys.argv[1], "wb").write(pem)
 fi
 
 case "${1:-}" in
-    migrate) shift; exec python scripts/mysql_migrate.py "$@" ;;
+    migrate)
+        shift
+        if [ "${RECONCILER_STORE:-neon}" = mysql ]; then
+            exec python scripts/mysql_migrate.py "$@"
+        fi
+        exec python scripts/pg_migrate.py "$@" ;;
     gateway) shift; exec python tools/gateway_stub.py "$@" ;;
     *)       exec python -m reconciler.run "$@" ;;
 esac

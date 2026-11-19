@@ -45,6 +45,10 @@ class LabelRemover(Protocol):
     def remove(self, *, message_id: str, label: str) -> None: ...
 
 
+class WorkflowRunner(Protocol):
+    def run(self, *, path: str, body: dict, timeout: float | None = None) -> dict: ...
+
+
 @dataclass(frozen=True)
 class Services:
     """Ports the impure actions need. Optional so a pure action needs none of them wired."""
@@ -53,6 +57,7 @@ class Services:
     mailer: Mailer | None = None
     pdf: PdfRenderer | None = None
     labels: LabelRemover | None = None
+    workflows: WorkflowRunner | None = None
 
 
 @dataclass(frozen=True)
@@ -95,4 +100,5 @@ from reconciler.actions import (  # noqa: E402,F401  (side-effect imports)
     mailbox,
     notify,
     render,
+    workflow,
 )

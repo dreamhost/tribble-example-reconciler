@@ -1,0 +1,33 @@
+# A process that REACTS to an event — a TEST FIXTURE, with placeholder names.
+#
+# Somebody (or something) posts `site_check_requested` with a `domain`. Vector takes it, Kafka
+# carries it, Vector writes it to Postgres, and the next reconcile opens a cycle for it. The
+# cycle runs an n8n workflow that looks at the site and answers with what it found; that answer
+# is recorded as the stage's result. The workflow then reports back with an event of its own,
+# posted to Vector like the first, which the last stage waits for.
+
+name: site_check
+# `{event_id}` is what makes opening idempotent: one event, one key, one cycle.
+cycle_key: "site_check_{event_id}"
+
+opens:
+  - {via: event, event: site_check_requested}
+
+stages:
+  - name: checked
+    kind: act
+    action: n8n.workflow
+    config:
+      path: site-check
+      input:
+        timeout_ms: 5000
+
+  # The workflow posts `site_check_reported` when it has stored its report. `correlate_on`
+  # ties it to this cycle: the event's `cycle_key` must equal the one this cycle recorded.
+  - name: reported
+    kind: await
+    after: [checked]
+    signal:
+      source: events
+      event: site_check_reported
+      correlate_on: cycle_key
