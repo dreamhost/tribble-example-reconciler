@@ -130,6 +130,17 @@ class ProcessDefinition(BaseModel):
             seen.add(stage.name)
         if not self.stages:
             raise ValueError("a process needs at least one stage")
+        # A milestone is itself an event, named `<process>_<stage>`. An outside event under
+        # that prefix which carries a `cycle_key` would be read back as a milestone, and a
+        # stage would look recorded when nobody recorded it.
+        listened = [o.event for o in self.opens if o.event]
+        listened += [s.signal["event"] for s in self.stages
+                     if s.signal.get("source") == "events" and s.signal.get("event")]
+        for event in listened:
+            if event.startswith(f"{self.name}_"):
+                raise ValueError(
+                    f"event '{event}' starts with this process's own name; milestones are "
+                    f"events named '{self.name}_<stage>', so rename the process or the event")
         if any(o.via == "event" for o in self.opens) and "{event_id}" not in self.cycle_key:
             raise ValueError("a process opened by an event needs `{event_id}` in its "
                              "`cycle_key`, or two events would mint the same cycle")

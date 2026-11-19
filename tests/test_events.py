@@ -111,23 +111,23 @@ OPTIONS = app.RunOptions(processes_dir=PROCESSES)
 def test_each_event_opens_one_cycle_carrying_the_event(wired):
     store, log, sink = wired
 
-    opened = app.open_from_events("site_check", options=OPTIONS, now=1790000100)
+    opened = app.open_from_events("check_site", options=OPTIONS, now=1790000100)
 
-    assert [c.key for c in opened] == ["site_check_e-1", "site_check_e-2"]
+    assert [c.key for c in opened] == ["check_site_e-1", "check_site_e-2"]
     assert opened[0].context == {"event": _body("e-1", domain="example.com"),
                                  "event_at": 1790000000}
     assert opened[0].user_id == "demo"
-    assert sink.recorded == [("site_check_e-1", GENESIS_STAGE),
-                             ("site_check_e-2", GENESIS_STAGE)]
+    assert sink.recorded == [("check_site_e-1", GENESIS_STAGE),
+                             ("check_site_e-2", GENESIS_STAGE)]
     # The read is bounded by the opener's lookback, a week by default.
     assert log.asked == [("site_check_requested", 1790000100 - 7 * 24 * 3600)]
 
 
 def test_opening_twice_opens_nothing_the_second_time(wired):
     store, log, sink = wired
-    app.open_from_events("site_check", options=OPTIONS, now=1790000100)
+    app.open_from_events("check_site", options=OPTIONS, now=1790000100)
 
-    assert app.open_from_events("site_check", options=OPTIONS, now=1790000200) == []
+    assert app.open_from_events("check_site", options=OPTIONS, now=1790000200) == []
     assert len(sink.recorded) == 2
 
 
@@ -150,7 +150,7 @@ class FakeWorkflows:
         return self.answer
 
 
-CYCLE = Cycle(key="site_check_e-1", process="site_check", user_id="demo", opened_at=1790000100,
+CYCLE = Cycle(key="check_site_e-1", process="check_site", user_id="demo", opened_at=1790000100,
               context={"event": _body("e-1", domain="example.com"), "event_at": 1790000000})
 
 
@@ -165,7 +165,7 @@ def test_a_workflow_stage_sends_the_cycle_and_records_the_answer():
     assert recorded == {"workflow": "site-check", "result": {"status": 200, "ms": 180}}
     ((path, body, _),) = workflows.calls
     assert path == "site-check"
-    assert body == {"cycle_key": "site_check_e-1", "process": "site_check", "user_id": "demo",
+    assert body == {"cycle_key": "check_site_e-1", "process": "check_site", "user_id": "demo",
                     "context": CYCLE.context, "input": {"timeout_ms": 5000}}
 
 
@@ -246,9 +246,9 @@ def test_an_event_becomes_a_cycle_that_runs_a_workflow_and_waits_for_the_report(
     monkeypatch.setattr(app, "services_for", lambda options: Services(workflows=workflows))
     monkeypatch.setattr(app, "finders",
                         lambda: {"events": SignalFinder(RecordedEvents(log))})
-    definition = app.definition_named("site_check", PROCESSES)
+    definition = app.definition_named("check_site", PROCESSES)
 
-    (cycle, _) = app.open_from_events("site_check", options=OPTIONS, now=1790000100)
+    (cycle, _) = app.open_from_events("check_site", options=OPTIONS, now=1790000100)
     outcome = app.advance_one(definition, cycle, {}, OPTIONS, sink)
 
     # The workflow ran and its answer was recorded; the report has not arrived.
@@ -261,7 +261,7 @@ def test_an_event_becomes_a_cycle_that_runs_a_workflow_and_waits_for_the_report(
     assert app.advance_one(definition, cycle, recorded, OPTIONS, sink).waiting_on == ["reported"]
 
     log.events.append((1790000160, _body("e-9", "site_check_reported",
-                                         cycle_key="site_check_e-1")))
+                                         cycle_key="check_site_e-1")))
     assert app.advance_one(definition, cycle, recorded, OPTIONS, sink).status is Status.COMPLETE
     assert len(workflows.calls) == 1
 
@@ -302,3 +302,12 @@ def test_the_gateway_is_sent_basic_credentials_only_when_both_are_set(monkeypatc
 
     monkeypatch.setenv("VECTOR_PASSWORD", "s3cret")
     assert request_headers(app._vector_auth())["Authorization"] == "Basic aW5nZXN0OnMzY3JldA=="
+
+
+def test_a_process_may_not_listen_for_events_under_its_own_name():
+    """`p_done` from outside would be read back as p's own `done` milestone."""
+    with pytest.raises(ValidationError, match="starts with this process's own name"):
+        _definition(opens=[{"via": "event", "event": "p_requested"}])
+    with pytest.raises(ValidationError, match="starts with this process's own name"):
+        _definition(stages=[{"name": "a", "kind": "await",
+                             "signal": {"source": "events", "event": "p_done"}}])

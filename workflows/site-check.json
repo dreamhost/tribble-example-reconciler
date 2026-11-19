@@ -1,0 +1,203 @@
+{
+  "name": "site-check",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "site-check",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "a1000000-0000-4000-8000-0000000000aa",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Reconciler webhook token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://{{ $json.body.context.event.domain }}",
+        "options": {
+          "timeout": "={{ $json.body.input.timeout_ms ?? 5000 }}",
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Check site",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "cycle_key",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.cycle_key }}"
+            },
+            {
+              "id": "b2",
+              "name": "user_id",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.user_id }}"
+            },
+            {
+              "id": "b3",
+              "name": "domain",
+              "type": "string",
+              "value": "={{ $('Webhook').item.json.body.context.event.domain }}"
+            },
+            {
+              "id": "b4",
+              "name": "status",
+              "type": "number",
+              "value": "={{ $json.statusCode ?? 0 }}"
+            },
+            {
+              "id": "b5",
+              "name": "ok",
+              "type": "boolean",
+              "value": "={{ ($json.statusCode ?? 0) >= 200 && ($json.statusCode ?? 0) < 400 }}"
+            },
+            {
+              "id": "b6",
+              "name": "error",
+              "type": "string",
+              "value": "={{ $json.error?.message ?? '' }}"
+            },
+            {
+              "id": "b7",
+              "name": "checked_at",
+              "type": "string",
+              "value": "={{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Answer the reconciler",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://vector-2s1li1.us-west-2.tribble.dreamhost.io/sensors/n8n",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ payload: { event_name: 'site_check_reported', user_id: $('Result').item.json.user_id, cycle_key: $('Result').item.json.cycle_key, domain: $('Result').item.json.domain, status: $('Result').item.json.status, ok: $('Result').item.json.ok } }) }}",
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Report to Vector",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "",
+          "name": "Vector ingest"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Check site",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check site": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Result": {
+      "main": [
+        [
+          {
+            "node": "Answer the reconciler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer the reconciler": {
+      "main": [
+        [
+          {
+            "node": "Report to Vector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

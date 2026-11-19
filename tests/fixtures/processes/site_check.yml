@@ -6,9 +6,12 @@
 # is recorded as the stage's result. The workflow then reports back with an event of its own,
 # posted to Vector like the first, which the last stage waits for.
 
-name: site_check
+# Named `check_site`, not `site_check`, on purpose. Milestones are events named
+# `<process>_<stage>`, so a process called `site_check` would record its `reported` stage as
+# `site_check_reported`: the very event the workflow posts. The definition refuses that.
+name: check_site
 # `{event_id}` is what makes opening idempotent: one event, one key, one cycle.
-cycle_key: "site_check_{event_id}"
+cycle_key: "check_site_{event_id}"
 
 opens:
   - {via: event, event: site_check_requested}
@@ -31,3 +34,6 @@ stages:
       source: events
       event: site_check_reported
       correlate_on: cycle_key
+      # The workflow posts its report a moment BEFORE this cycle records `checked`, which is
+      # the instant the wait starts from. Look a little earlier than that.
+      slack_seconds: 300

@@ -57,8 +57,8 @@ posts each milestone to the gateway and reads it back from Postgres on the next 
 writes to the database.
 
 ```yaml
-name: site_check
-cycle_key: "site_check_{event_id}"
+name: check_site
+cycle_key: "check_site_{event_id}"
 opens:
   - {via: event, event: site_check_requested}   # one cycle per event; the event is its context
 stages:
@@ -80,7 +80,10 @@ stages:
 - A milestone is readable only once Vector has written it. A run that starts before then
   repeats the stage, which is why every stage must be safe to repeat.
 
-The full sample is `tests/fixtures/processes/site_check.yml`.
+- **Name events and processes apart.** A milestone is recorded as an event named
+  `<process>_<stage>`, so a process may not listen for an event that starts with its own name.
+
+`processes/check_site.yml` is this process; `workflows/site-check.json` is its n8n workflow.
 
 ## Running it
 
