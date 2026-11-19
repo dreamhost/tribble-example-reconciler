@@ -80,7 +80,7 @@ def cmd_reconcile(args) -> int:
               f"for event {cycle.context['event'].get('name')}")
     results = advance(args.process, cycle_key=args.cycle, options=options)
     # A cycle opened a moment ago may not be readable yet: nothing is written in a dry run,
-    # and on Postgres the write travels through Vector and Kafka. Walk those directly, so
+    # and on Postgres the write travels through Vector. Walk those directly, so
     # reacting to an event does not wait a whole extra run.
     seen = {cycle.key for cycle, _ in results}
     results += [(cycle, walk_fresh(args.process, cycle, options=options))

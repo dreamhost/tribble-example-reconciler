@@ -5,7 +5,7 @@ Long-running, multi-step processes described as data and advanced by a reconcile
 
 This is a sanitised copy of a private project, kept as a realistic workload for testing a
 container platform: a scheduled CLI that reads an event log in Postgres, runs n8n workflows,
-and posts its own progress as events to an HTTP gateway (Vector, with Kafka behind it). It ships no process definitions; the one sample under `tests/fixtures/` uses
+and posts its own progress as events to an HTTP gateway (Vector). It ships no process definitions; the one sample under `tests/fixtures/` uses
 placeholder names, addresses, rates and ids.
 
 ## The idea
@@ -46,10 +46,10 @@ cycle. A cycle opened by an event is keyed by that event, so it can only be open
 ## Reacting to events
 
 ```
-producer --POST /sensors/<app>--> Vector --> Kafka --> Vector --> Postgres `events`
-                                    ^                                   |
-                                    |                                   v
-                          n8n workflow <--- webhook --- reconciler (on a schedule)
+producer --POST /sensors/<app>--> Vector --> Postgres `events`
+                                    ^               |
+                                    |               v
+            n8n workflow <--- webhook --- reconciler (on a schedule)
 ```
 
 Everything that happens is an event in one table, and the reconciler is one more producer: it
@@ -77,7 +77,7 @@ stages:
   again: workflows with side effects should de-duplicate on `cycle_key`.
 - **`source: events`** waits for an event of that name. A workflow reports back by posting one
   to the gateway.
-- A milestone takes a moment to travel through Kafka. A run that starts inside that moment
+- A milestone is readable only once Vector has written it. A run that starts before then
   repeats the stage, which is why every stage must be safe to repeat.
 
 The full sample is `tests/fixtures/processes/site_check.yml`.
@@ -109,8 +109,7 @@ One source, several apps, each with its own start command:
 | advance | `sh bin/reconciler reconcile --process <name>` | scheduled, every minute or so |
 | sweep | `sh bin/reconciler sweep-tasks` | scheduled, every 5 minutes |
 
-Beside them run Postgres (from the template), Kafka
-([kafka-tribble](https://github.com/rodis/kafka-tribble)), Vector
+Beside them run Postgres (from the template), Vector
 ([vector-tribble](https://github.com/rodis/vector-tribble)) and n8n
 ([n8n-tribble](https://github.com/rodis/n8n-tribble)). Each scheduled app needs
 `RECONCILER_STORE=postgres`, `DATABASE_URL` as a reference to the Postgres app's, and

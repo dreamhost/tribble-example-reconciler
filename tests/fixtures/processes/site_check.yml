@@ -1,7 +1,7 @@
 # A process that REACTS to an event — a TEST FIXTURE, with placeholder names.
 #
-# Somebody (or something) posts `site_check_requested` with a `domain`. Vector takes it, Kafka
-# carries it, Vector writes it to Postgres, and the next reconcile opens a cycle for it. The
+# Somebody (or something) posts `site_check_requested` with a `domain`. Vector takes it
+# and writes it to Postgres, and the next reconcile opens a cycle for it. The
 # cycle runs an n8n workflow that looks at the site and answers with what it found; that answer
 # is recorded as the stage's result. The workflow then reports back with an event of its own,
 # posted to Vector like the first, which the last stage waits for.

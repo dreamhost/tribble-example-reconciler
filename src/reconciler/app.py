@@ -513,7 +513,7 @@ def open_from_events(process: str, *, options: RunOptions | None = None,
     event that already has a cycle is recognised by the key existing, and running this twice
     opens nothing the second time.
 
-    On Postgres the genesis reaches the store through Vector and Kafka, a moment after this
+    On Postgres the genesis reaches the store through Vector, a moment after this
     returns. A run that starts inside that moment opens the same key again; the store then
     holds two identical genesis events, which read back as one cycle.
 
