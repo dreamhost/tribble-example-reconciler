@@ -1,4 +1,4 @@
-# process-reconciler
+# tribble-example-reconciler
 
 Long-running, multi-step processes described as data and advanced by a reconciler that is a
 *pure function of the milestones recorded so far*.
@@ -9,7 +9,7 @@ and posts its own progress as events to an HTTP gateway (Vector). The invoice sa
 `tests/fixtures/` uses placeholder names, addresses, rates and ids.
 
 It is one part of a larger system. The architecture, with a diagram of every service and the
-cluster it runs in, is in [tribble-stack](https://github.com/rodis/tribble-stack).
+cluster it runs in, is in [tribble-example-stack](https://github.com/dreamhost/tribble-example-stack).
 
 ## The idea
 
@@ -110,7 +110,7 @@ One source, several apps, each with its own start command:
 Each scheduled app needs `RECONCILER_STORE=postgres`, `DATABASE_URL` as a reference to the
 Postgres app's, and `VECTOR_BASE_URL=http://<Vector's internal address>` with its credentials.
 The services beside them are described in
-[tribble-stack](https://github.com/rodis/tribble-stack).
+[tribble-example-stack](https://github.com/dreamhost/tribble-example-stack).
 
 ### With MySQL instead
 
