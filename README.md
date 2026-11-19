@@ -5,8 +5,11 @@ Long-running, multi-step processes described as data and advanced by a reconcile
 
 This is a sanitised copy of a private project, kept as a realistic workload for testing a
 container platform: a scheduled CLI that reads an event log in Postgres, runs n8n workflows,
-and posts its own progress as events to an HTTP gateway (Vector). It ships no process definitions; the one sample under `tests/fixtures/` uses
-placeholder names, addresses, rates and ids.
+and posts its own progress as events to an HTTP gateway (Vector). The invoice sample under
+`tests/fixtures/` uses placeholder names, addresses, rates and ids.
+
+It is one part of a larger system. The architecture, with a diagram of every service and the
+cluster it runs in, is in [tribble-stack](https://github.com/rodis/tribble-stack).
 
 ## The idea
 
@@ -45,16 +48,9 @@ cycle. A cycle opened by an event is keyed by that event, so it can only be open
 
 ## Reacting to events
 
-```
-producer --POST /sensors/<app>--> Vector --> Postgres `events`
-                                    ^               |
-                                    |               v
-            n8n workflow <--- webhook --- reconciler (on a schedule)
-```
-
-Everything that happens is an event in one table, and the reconciler is one more producer: it
-posts each milestone to the gateway and reads it back from Postgres on the next run. It never
-writes to the database.
+Everything that happens is an event in one Postgres table, written by Vector. The reconciler
+is one more producer: it posts each milestone to Vector and reads it back from Postgres on the
+next run. It never writes to the database.
 
 ```yaml
 name: check_site
@@ -79,7 +75,6 @@ stages:
   to the gateway.
 - A milestone is readable only once Vector has written it. A run that starts before then
   repeats the stage, which is why every stage must be safe to repeat.
-
 - **Name events and processes apart.** A milestone is recorded as an event named
   `<process>_<stage>`, so a process may not listen for an event that starts with its own name.
 
@@ -112,11 +107,10 @@ One source, several apps, each with its own start command:
 | advance | `sh bin/reconciler reconcile --process <name>` | scheduled, every minute or so |
 | sweep | `sh bin/reconciler sweep-tasks` | scheduled, every 5 minutes |
 
-Beside them run Postgres (from the template), Vector
-([vector-tribble](https://github.com/rodis/vector-tribble)) and n8n
-([n8n-tribble](https://github.com/rodis/n8n-tribble)). Each scheduled app needs
-`RECONCILER_STORE=postgres`, `DATABASE_URL` as a reference to the Postgres app's, and
-`VECTOR_BASE_URL=http://<Vector's internal address>` with its credentials.
+Each scheduled app needs `RECONCILER_STORE=postgres`, `DATABASE_URL` as a reference to the
+Postgres app's, and `VECTOR_BASE_URL=http://<Vector's internal address>` with its credentials.
+The services beside them are described in
+[tribble-stack](https://github.com/rodis/tribble-stack).
 
 ### With MySQL instead
 
@@ -171,7 +165,8 @@ The Postgres schema is `migrations/postgres/*.sql` and the MySQL one `migrations
 
 | path | |
 | :-- | :-- |
-| `processes/` | the definitions: data, not code. Empty here; add one `*.yml` per process |
+| `processes/` | the definitions: data, not code. One `*.yml` per process |
+| `workflows/` | the n8n workflows the processes call |
 | `tests/fixtures/processes/` | a sample definition the test suite reads |
 | `src/reconciler/core.py` | `Cycle`, `Milestone`, and the ports. Imports nothing |
 | `src/reconciler/adapters/` | the outside world: Postgres, MySQL, n8n, Gmail, mail, LLM, PDF |
