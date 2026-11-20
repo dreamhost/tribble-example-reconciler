@@ -126,7 +126,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://vector-2s1li1.us-west-2.tribble.dreamhost.io/sensors/n8n",
+        "url": "https://vector-2zdouv.us-west-2.tribble.dreamhost.io/sensors/n8n",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "sendBody": true,
