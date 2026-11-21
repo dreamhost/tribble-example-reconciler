@@ -125,13 +125,175 @@
     },
     {
       "parameters": {
+        "method": "GET",
+        "url": "=https://dns.google/resolve?name={{ $('Result').first().json.domain }}&type=A",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "DNS A",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://dns.google/resolve?name={{ $('Result').first().json.domain }}&type=AAAA",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "DNS AAAA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://dns.google/resolve?name={{ $('Result').first().json.domain }}&type=NS",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000008",
+      "name": "DNS NS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://rdap.org/domain/{{ $('Result').first().json.domain }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "n8n-site-check"
+            }
+          ]
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000009",
+      "name": "RDAP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// The certificate the site serves on 443, whoever issued it. Needs `tls`, which the image\n// allows with NODE_FUNCTION_ALLOW_BUILTIN=tls; without that this node reports an error\n// and the rest of the report still goes out.\nconst tls = require('tls');\nconst domain = $('Result').first().json.domain;\n\nconst certificate = await new Promise((resolve) => {\n  const socket = tls.connect(\n    { host: domain, port: 443, servername: domain, rejectUnauthorized: false, timeout: 5000 },\n    () => {\n      const c = socket.getPeerCertificate();\n      const expires = new Date(c.valid_to);\n      resolve({\n        subject: c.subject?.CN ?? '',\n        issuer: c.issuer?.O ?? c.issuer?.CN ?? '',\n        valid_from: new Date(c.valid_from).toISOString(),\n        expires_at: expires.toISOString(),\n        days_left: Math.floor((expires - Date.now()) / 86400000),\n        trusted: socket.authorized,\n        error: socket.authorized ? '' : String(socket.authorizationError ?? ''),\n      });\n      socket.end();\n    },\n  );\n  socket.on('error', (e) => resolve({ error: e.message }));\n  socket.on('timeout', () => {\n    socket.destroy();\n    resolve({ error: 'timed out' });\n  });\n});\n\nreturn [{ json: certificate }];\n"
+      },
+      "id": "a1000000-0000-4000-8000-000000000010",
+      "name": "Certificate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url={{ encodeURIComponent('https://' + $('Result').first().json.domain) }}&strategy=mobile&category=performance",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000011",
+      "name": "PageSpeed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// One event out of everything the checks found. A check that failed is part of the report\n// (its status or error), not a reason to send none.\nconst result = $('Result').first().json;\n\n// Only records of the type asked for: an answer for a CNAME'd name also lists the CNAME.\nconst answers = (node, type) =>\n  ($(node).first().json.body?.Answer ?? []).filter((a) => a.type === type).map((a) => a.data);\n\nconst rdapResponse = $('RDAP').first().json;\nconst rdap = rdapResponse.body ?? {};\nconst rdapEvent = (action) =>\n  (rdap.events ?? []).find((e) => e.eventAction === action)?.eventDate ?? '';\nconst registrar = (rdap.entities ?? []).find((e) => (e.roles ?? []).includes('registrar'));\nconst registrarName = (registrar?.vcardArray?.[1] ?? []).find((f) => f[0] === 'fn')?.[3] ?? '';\n\nconst pagespeedResponse = $('PageSpeed').first().json;\nconst pagespeed = pagespeedResponse.body ?? {};\nconst score = pagespeed.lighthouseResult?.categories?.performance?.score;\n\nreturn [\n  {\n    json: {\n      event_name: 'site_check_reported',\n      user_id: result.user_id,\n      cycle_key: result.cycle_key,\n      domain: result.domain,\n      status: result.status,\n      ok: result.ok,\n      dns: {\n        a: answers('DNS A', 1),\n        aaaa: answers('DNS AAAA', 28),\n        ns: answers('DNS NS', 2),\n      },\n      rdap: {\n        status: rdapResponse.statusCode ?? 0,\n        registrar: registrarName,\n        registered_at: rdapEvent('registration'),\n        expires_at: rdapEvent('expiration'),\n      },\n      certificate: $('Certificate').first().json,\n      pagespeed: {\n        status: pagespeedResponse.statusCode ?? 0,\n        performance: score == null ? null : Math.round(score * 100),\n        error: pagespeed.error?.message ?? '',\n      },\n    },\n  },\n];\n"
+      },
+      "id": "a1000000-0000-4000-8000-000000000012",
+      "name": "Full report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "https://vector-2zdouv.us-west-2.tribble.dreamhost.io/sensors/n8n",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpBasicAuth",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ payload: { event_name: 'site_check_reported', user_id: $('Result').item.json.user_id, cycle_key: $('Result').item.json.cycle_key, domain: $('Result').item.json.domain, status: $('Result').item.json.status, ok: $('Result').item.json.ok } }) }}",
+        "jsonBody": "={{ JSON.stringify({ payload: $json }) }}",
         "options": {}
       },
       "id": "a1000000-0000-4000-8000-000000000005",
@@ -139,8 +301,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        880,
-        0
+        1540,
+        220
       ],
       "credentials": {
         "httpBasicAuth": {
@@ -185,6 +347,83 @@
       ]
     },
     "Answer the reconciler": {
+      "main": [
+        [
+          {
+            "node": "DNS A",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DNS A": {
+      "main": [
+        [
+          {
+            "node": "DNS AAAA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DNS AAAA": {
+      "main": [
+        [
+          {
+            "node": "DNS NS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DNS NS": {
+      "main": [
+        [
+          {
+            "node": "RDAP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RDAP": {
+      "main": [
+        [
+          {
+            "node": "Certificate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Certificate": {
+      "main": [
+        [
+          {
+            "node": "PageSpeed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PageSpeed": {
+      "main": [
+        [
+          {
+            "node": "Full report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Full report": {
       "main": [
         [
           {
